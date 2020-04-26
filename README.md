@@ -193,8 +193,8 @@ proxies:
       # headers:
       #   custom: value
 
-  # shadowsocksr support is experimental
-  # see https://github.com/sh4d0wfiend/go-shadowsocksr for the supported protocols and obfs
+  # shadowsocksR
+  # see https://github.com/WhoJave/gossr for the supported protocols and obfs
   - name: "ssr"
     type: ssr
     server: server
@@ -202,9 +202,9 @@ proxies:
     cipher: chacha20-ietf-poly1305
     password: "password"
     protocol: auth_aes128_md5
-    protocol-param: your_protocol_param
+    protocolparam: your_protocol_param
     obfs: tls1.2_ticket_auth
-    obfs-param: bing.com
+    obfsparam: bing.com
 
   # vmess
   # cipher support auto/aes-128-gcm/chacha20-poly1305/none
