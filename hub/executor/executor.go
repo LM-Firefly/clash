@@ -9,8 +9,8 @@ import (
 	"github.com/Dreamacro/clash/adapters/provider"
 	"github.com/Dreamacro/clash/component/auth"
 	"github.com/Dreamacro/clash/component/dialer"
-	trie "github.com/Dreamacro/clash/component/domain-trie"
 	"github.com/Dreamacro/clash/component/resolver"
+	"github.com/Dreamacro/clash/component/trie"
 	"github.com/Dreamacro/clash/config"
 	C "github.com/Dreamacro/clash/constant"
 	"github.com/Dreamacro/clash/dns"
@@ -99,6 +99,7 @@ func GetGeneral() *config.General {
 		Port:           ports.Port,
 		SocksPort:      ports.SocksPort,
 		RedirPort:      ports.RedirPort,
+		MixedPort:      ports.MixedPort,
 		Authentication: authenticator,
 		AllowLan:       P.AllowLan(),
 		BindAddress:    P.BindAddress(),
@@ -153,7 +154,7 @@ func updateDNS(c *config.DNS) {
 	}
 }
 
-func updateHosts(tree *trie.Trie) {
+func updateHosts(tree *trie.DomainTrie) {
 	resolver.DefaultHosts = tree
 }
 
@@ -185,6 +186,10 @@ func updateGeneral(general *config.General) {
 
 	if err := P.ReCreateRedir(general.RedirPort); err != nil {
 		log.Errorln("Start Redir server error: %s", err.Error())
+	}
+
+	if err := P.ReCreateMixed(general.MixedPort); err != nil {
+		log.Errorln("Start Mixed(http and socks5) server error: %s", err.Error())
 	}
 }
 

@@ -21,6 +21,8 @@ func (err Error) Error() string {
 // Command is request commands as defined in RFC 1928 section 4.
 type Command = uint8
 
+const Version = 5
+
 // SOCKS request commands as defined in RFC 1928 section 4.
 const (
 	CmdConnect      Command = 1
@@ -227,6 +229,10 @@ func ClientHandshake(rw io.ReadWriter, addr Addr, command Command, user *User) (
 	}
 
 	if buf[1] == 2 {
+		if user == nil {
+			return nil, ErrAuth
+		}
+
 		// password protocol version
 		authMsg := &bytes.Buffer{}
 		authMsg.WriteByte(1)
