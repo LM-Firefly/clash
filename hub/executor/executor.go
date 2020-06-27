@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/Dreamacro/clash/adapters/provider"
@@ -25,30 +24,11 @@ var (
 	mux sync.Mutex
 )
 
-// forward compatibility before 1.0
-func readRawConfig(path string) ([]byte, error) {
-	data, err := ioutil.ReadFile(path)
-	if err == nil && len(data) != 0 {
-		return data, nil
-	}
-
-	if filepath.Ext(path) != ".yaml" {
-		return nil, err
-	}
-
-	path = path[:len(path)-5] + ".yml"
-	if _, fallbackErr := os.Stat(path); fallbackErr == nil {
-		return ioutil.ReadFile(path)
-	}
-
-	return data, err
-}
-
 func readConfig(path string) ([]byte, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, err
 	}
-	data, err := readRawConfig(path)
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -118,18 +98,7 @@ func GetGeneral() *config.General {
 	return general
 }
 
-func updateExperimental(c *config.Config) {
-	cfg := c.Experimental
-
-	tunnel.UpdateExperimental(cfg.IgnoreResolveFail)
-	if cfg.Interface != "" && c.DNS.Enable {
-		dialer.DialHook = dialer.DialerWithInterface(cfg.Interface)
-		dialer.ListenPacketHook = dialer.ListenPacketWithInterface(cfg.Interface)
-	} else {
-		dialer.DialHook = nil
-		dialer.ListenPacketHook = nil
-	}
-}
+func updateExperimental(c *config.Config) {}
 
 func updateDNS(c *config.DNS) {
 	if c.Enable == false {
@@ -178,6 +147,14 @@ func updateGeneral(general *config.General, force bool) {
 	log.SetLevel(general.LogLevel)
 	tunnel.SetMode(general.Mode)
 	resolver.DisableIPv6 = !general.IPv6
+
+	if general.Interface != "" {
+		dialer.DialHook = dialer.DialerWithInterface(general.Interface)
+		dialer.ListenPacketHook = dialer.ListenPacketWithInterface(general.Interface)
+	} else {
+		dialer.DialHook = nil
+		dialer.ListenPacketHook = nil
+	}
 
 	if !force {
 		return

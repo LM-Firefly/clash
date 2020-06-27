@@ -27,9 +27,10 @@ import (
 type General struct {
 	Inbound
 	Controller
-	Mode     T.TunnelMode `json:"mode"`
-	LogLevel log.LogLevel `json:"log-level"`
-	IPv6     bool         `json:"ipv6"`
+	Mode      T.TunnelMode `json:"mode"`
+	LogLevel  log.LogLevel `json:"log-level"`
+	IPv6      bool         `json:"ipv6"`
+	Interface string       `json:"interface-name"`
 }
 
 // Inbound
@@ -70,10 +71,7 @@ type FallbackFilter struct {
 }
 
 // Experimental config
-type Experimental struct {
-	IgnoreResolveFail bool   `yaml:"ignore-resolve-fail"`
-	Interface         string `yaml:"interface-name"`
-}
+type Experimental struct{}
 
 // Config is clash config manager
 type Config struct {
@@ -119,6 +117,7 @@ type RawConfig struct {
 	ExternalController string       `yaml:"external-controller"`
 	ExternalUI         string       `yaml:"external-ui"`
 	Secret             string       `yaml:"secret"`
+	Interface          string       `yaml:"interface-name"`
 
 	ProxyProvider map[string]map[string]interface{} `yaml:"proxy-providers"`
 	Hosts         map[string]string                 `yaml:"hosts"`
@@ -127,12 +126,6 @@ type RawConfig struct {
 	Proxy         []map[string]interface{}          `yaml:"proxies"`
 	ProxyGroup    []map[string]interface{}          `yaml:"proxy-groups"`
 	Rule          []string                          `yaml:"rules"`
-
-	// remove after 1.0
-	ProxyProviderOld map[string]map[string]interface{} `yaml:"proxy-provider"`
-	ProxyOld         []map[string]interface{}          `yaml:"Proxy"`
-	ProxyGroupOld    []map[string]interface{}          `yaml:"Proxy Group"`
-	RuleOld          []string                          `yaml:"Rule"`
 }
 
 // Parse config
@@ -157,9 +150,6 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		Rule:           []string{},
 		Proxy:          []map[string]interface{}{},
 		ProxyGroup:     []map[string]interface{}{},
-		Experimental: Experimental{
-			IgnoreResolveFail: true,
-		},
 		DNS: RawDNS{
 			Enable:      false,
 			FakeIPRange: "198.18.0.1/16",
@@ -172,11 +162,6 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 				"8.8.8.8",
 			},
 		},
-
-		// remove after 1.0
-		RuleOld:       []string{},
-		ProxyOld:      []map[string]interface{}{},
-		ProxyGroupOld: []map[string]interface{}{},
 	}
 
 	if err := yaml.Unmarshal(buf, &rawCfg); err != nil {
@@ -253,9 +238,10 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 			ExternalUI:         cfg.ExternalUI,
 			Secret:             cfg.Secret,
 		},
-		Mode:     cfg.Mode,
-		LogLevel: cfg.LogLevel,
-		IPv6:     cfg.IPv6,
+		Mode:      cfg.Mode,
+		LogLevel:  cfg.LogLevel,
+		IPv6:      cfg.IPv6,
+		Interface: cfg.Interface,
 	}, nil
 }
 
@@ -266,18 +252,6 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 	proxiesConfig := cfg.Proxy
 	groupsConfig := cfg.ProxyGroup
 	providersConfig := cfg.ProxyProvider
-
-	if len(proxiesConfig) == 0 {
-		proxiesConfig = cfg.ProxyOld
-	}
-
-	if len(groupsConfig) == 0 {
-		groupsConfig = cfg.ProxyGroupOld
-	}
-
-	if len(providersConfig) == 0 {
-		providersConfig = cfg.ProxyProviderOld
-	}
 
 	proxies["DIRECT"] = outbound.NewProxy(outbound.NewDirect())
 	proxies["REJECT"] = outbound.NewProxy(outbound.NewReject())
@@ -374,13 +348,7 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 
 func parseRules(cfg *RawConfig, proxies map[string]C.Proxy) ([]C.Rule, error) {
 	rules := []C.Rule{}
-
 	rulesConfig := cfg.Rule
-
-	// remove after 1.0
-	if len(rulesConfig) == 0 {
-		rulesConfig = cfg.RuleOld
-	}
 
 	// parse rules
 	for idx, line := range rulesConfig {
