@@ -25,12 +25,12 @@ func ParseProxy(mapping map[string]interface{}) (C.Proxy, error) {
 		}
 		proxy, err = NewShadowSocks(*ssOption)
 	case "ssr":
-		ssrOption := &ShadowsocksROption{}
+		ssrOption := &ShadowSocksROption{}
 		err = decoder.Decode(mapping, ssrOption)
 		if err != nil {
 			break
 		}
-		proxy, err = NewShadowsocksR(*ssrOption)
+		proxy, err = NewShadowSocksR(*ssrOption)
 	case "socks5":
 		socksOption := &Socks5Option{}
 		err = decoder.Decode(mapping, socksOption)
