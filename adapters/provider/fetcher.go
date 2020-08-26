@@ -149,7 +149,7 @@ func (f *fetcher) pullLoop() {
 	defer timer.Stop()
 
 	for atomic.LoadUint32(&f.closed) == 0 {
-		offset := f.interval - time.Now().Sub(*f.tryUpdateAt)
+		offset := f.interval - time.Since(*f.tryUpdateAt)
 
 		if offset < 0 {
 			offset = time.Second * 1
