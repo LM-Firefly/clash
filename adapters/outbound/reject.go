@@ -10,12 +10,19 @@ import (
 	C "github.com/Dreamacro/clash/constant"
 )
 
+const (
+	DropDuration = 10 * time.Second
+) 
+
 type Reject struct {
 	*Base
+	duration time.Duration
 }
 
 func (r *Reject) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
-	return NewConn(&NopConn{}, r), nil
+	return NewConn(&NopConn{
+		duration: r.duration,
+	}, r), nil
 }
 
 func (r *Reject) DialUDP(metadata *C.Metadata) (C.PacketConn, error) {
@@ -32,13 +39,27 @@ func NewReject() *Reject {
 	}
 }
 
-type NopConn struct{}
+func NewRejectDrop() *Reject {
+	return &Reject{
+		Base: &Base{
+			name: "REJECT-DROP",
+			tp:   C.RejectDrop,
+			udp:  true,
+		},
+		duration: DropDuration,
+	}
+}
+
+type NopConn struct{
+	duration time.Duration
+}
 
 func (rw *NopConn) Read(b []byte) (int, error) {
 	return 0, io.EOF
 }
 
 func (rw *NopConn) Write(b []byte) (int, error) {
+	<- time.After(rw.duration)
 	return 0, io.EOF
 }
 
