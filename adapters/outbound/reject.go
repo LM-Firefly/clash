@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	DropDuration = 10 * time.Second
+	DropDuration = 60 * time.Second
 ) 
 
 type Reject struct {
