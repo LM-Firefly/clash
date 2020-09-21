@@ -4,6 +4,7 @@ import (
 	"net"
 
 	"github.com/Dreamacro/clash/common/sockopt"
+	"github.com/Dreamacro/clash/log"
 
 	D "github.com/miekg/dns"
 )
@@ -26,22 +27,29 @@ func (s *Server) ServeDNS(w D.ResponseWriter, r *D.Msg) {
 		return
 	}
 
-	s.handler(w, r)
+	msg, err := s.handler(r)
+	if err != nil {
+		D.HandleFailed(w, r)
+		return
+	}
+
+	w.WriteMsg(msg)
 }
 
 func (s *Server) setHandler(handler handler) {
 	s.handler = handler
 }
 
-func ReCreateServer(addr string, resolver *Resolver) error {
+func ReCreateServer(addr string, resolver *Resolver, mapper *ResolverEnhancer) error {
 	if addr == address && resolver != nil {
-		handler := newHandler(resolver)
+		handler := newHandler(resolver, mapper)
 		server.setHandler(handler)
 		return nil
 	}
 
 	if server.Server != nil {
 		server.Shutdown()
+		server = &Server{}
 		address = ""
 	}
 
@@ -62,11 +70,11 @@ func ReCreateServer(addr string, resolver *Resolver) error {
 
 	err = sockopt.UDPReuseaddr(p)
 	if err != nil {
-		return err
+		log.Warnln("Failed to Reuse UDP Address: %s", err)
 	}
 
 	address = addr
-	handler := newHandler(resolver)
+	handler := newHandler(resolver, mapper)
 	server = &Server{handler: handler}
 	server.Server = &D.Server{Addr: addr, PacketConn: p, Handler: server}
 

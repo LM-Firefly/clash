@@ -12,24 +12,19 @@ import (
 	"github.com/Dreamacro/clash/component/nat"
 	"github.com/Dreamacro/clash/component/resolver"
 	C "github.com/Dreamacro/clash/constant"
-	"github.com/Dreamacro/clash/dns"
 	"github.com/Dreamacro/clash/log"
 
 	channels "gopkg.in/eapache/channels.v1"
 )
 
 var (
-	tcpQueue     = channels.NewInfiniteChannel()
-	udpQueue     = channels.NewInfiniteChannel()
-	natTable     = nat.New()
-	rules        []C.Rule
-	proxies      = make(map[string]C.Proxy)
-	providers    map[string]provider.ProxyProvider
-	configMux    sync.RWMutex
-	enhancedMode *dns.Resolver
-
-	// experimental features
-	ignoreResolveFail bool
+	tcpQueue  = channels.NewInfiniteChannel()
+	udpQueue  = channels.NewInfiniteChannel()
+	natTable  = nat.New()
+	rules     []C.Rule
+	proxies   = make(map[string]C.Proxy)
+	providers map[string]provider.ProxyProvider
+	configMux sync.RWMutex
 
 	// Outbound Rule
 	mode = Rule
@@ -82,13 +77,6 @@ func UpdateProxies(newProxies map[string]C.Proxy, newProviders map[string]provid
 	configMux.Unlock()
 }
 
-// UpdateExperimental handle update experimental config
-func UpdateExperimental(value bool) {
-	configMux.Lock()
-	ignoreResolveFail = value
-	configMux.Unlock()
-}
-
 // Mode return current mode
 func Mode() TunnelMode {
 	return mode
@@ -97,11 +85,6 @@ func Mode() TunnelMode {
 // SetMode change the mode of tunnel
 func SetMode(m TunnelMode) {
 	mode = m
-}
-
-// SetResolver set custom dns resolver for enhanced mode
-func SetResolver(r *dns.Resolver) {
-	enhancedMode = r
 }
 
 // processUDP starts a loop to handle udp packet
@@ -130,7 +113,7 @@ func process() {
 }
 
 func needLookupIP(metadata *C.Metadata) bool {
-	return enhancedMode != nil && (enhancedMode.IsMapping() || enhancedMode.FakeIPEnabled()) && metadata.Host == "" && metadata.DstIP != nil
+	return resolver.MappingEnabled() && metadata.Host == "" && metadata.DstIP != nil
 }
 
 func preHandleMetadata(metadata *C.Metadata) error {
@@ -141,17 +124,17 @@ func preHandleMetadata(metadata *C.Metadata) error {
 
 	// preprocess enhanced-mode metadata
 	if needLookupIP(metadata) {
-		host, exist := enhancedMode.IPToHost(metadata.DstIP)
+		host, exist := resolver.FindHostByIP(metadata.DstIP)
 		if exist {
 			metadata.Host = host
 			metadata.AddrType = C.AtypDomainName
-			if enhancedMode.FakeIPEnabled() {
+			if resolver.FakeIPEnabled() {
 				metadata.DstIP = nil
 			} else if node := resolver.DefaultHosts.Search(host); node != nil {
 				// redir-host should lookup the hosts
 				metadata.DstIP = node.Data.(net.IP)
 			}
-		} else if enhancedMode.IsFakeIP(metadata.DstIP) {
+		} else if resolver.IsFakeIP(metadata.DstIP) {
 			return fmt.Errorf("fake DNS record %s missing", metadata.DstIP)
 		}
 	}
@@ -187,7 +170,7 @@ func handleUDPConn(packet *inbound.PacketAdapter) {
 
 	// make a fAddr if requset ip is fakeip
 	var fAddr net.Addr
-	if enhancedMode != nil && enhancedMode.IsFakeIP(metadata.DstIP) {
+	if resolver.IsFakeIP(metadata.DstIP) {
 		fAddr = metadata.UDPAddr()
 	}
 
@@ -228,7 +211,7 @@ func handleUDPConn(packet *inbound.PacketAdapter) {
 
 			switch true {
 			case rule != nil:
-				log.Infoln("[UDP] %s --> %v match %s using %s", metadata.SourceAddress(), metadata.String(), rule.RuleType().String(), rawPc.Chains().String())
+				log.Infoln("[UDP] %s --> %v match %s(%s) using %s", metadata.SourceAddress(), metadata.String(), rule.RuleType().String(), rule.Payload(), rawPc.Chains().String())
 			case mode == Global:
 				log.Infoln("[UDP] %s --> %v using GLOBAL", metadata.SourceAddress(), metadata.String())
 			case mode == Direct:
@@ -281,7 +264,7 @@ func handleTCPConn(localConn C.ServerAdapter) {
 
 	switch true {
 	case rule != nil:
-		log.Infoln("[TCP] %s --> %v match %s using %s", metadata.SourceAddress(), metadata.String(), rule.RuleType().String(), remoteConn.Chains().String())
+		log.Infoln("[TCP] %s --> %v match %s(%s) using %s", metadata.SourceAddress(), metadata.String(), rule.RuleType().String(), rule.Payload(), remoteConn.Chains().String())
 	case mode == Global:
 		log.Infoln("[TCP] %s --> %v using GLOBAL", metadata.SourceAddress(), metadata.String())
 	case mode == Direct:
@@ -299,7 +282,7 @@ func handleTCPConn(localConn C.ServerAdapter) {
 }
 
 func shouldResolveIP(rule C.Rule, metadata *C.Metadata) bool {
-	return !rule.NoResolveIP() && metadata.Host != "" && metadata.DstIP == nil
+	return rule.ShouldResolveIP() && metadata.Host != "" && metadata.DstIP == nil
 }
 
 func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
@@ -318,9 +301,6 @@ func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
 		if !resolved && shouldResolveIP(rule, metadata) {
 			ip, err := resolver.ResolveIP(metadata.Host)
 			if err != nil {
-				if !ignoreResolveFail {
-					return nil, nil, fmt.Errorf("[DNS] resolve %s error: %s", metadata.Host, err.Error())
-				}
 				log.Debugln("[DNS] resolve %s error: %s", metadata.Host, err.Error())
 			} else {
 				log.Debugln("[DNS] %s --> %s", metadata.Host, ip.String())

@@ -66,7 +66,7 @@ func DialContext(ctx context.Context, network, address string) (net.Conn, error)
 		}
 		return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
 	case "tcp", "udp":
-		return dualStackDailContext(ctx, network, address)
+		return dualStackDialContext(ctx, network, address)
 	default:
 		return nil, errors.New("network invalid")
 	}
@@ -88,7 +88,7 @@ func ListenPacket(network, address string) (net.PacketConn, error) {
 	return lc.ListenPacket(context.Background(), network, address)
 }
 
-func dualStackDailContext(ctx context.Context, network, address string) (net.Conn, error) {
+func dualStackDialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, err
@@ -147,28 +147,27 @@ func dualStackDailContext(ctx context.Context, network, address string) (net.Con
 	go startRacer(ctx, network+"4", host, false)
 	go startRacer(ctx, network+"6", host, true)
 
-	for {
-		select {
-		case res := <-results:
-			if res.error == nil {
-				return res.Conn, nil
-			}
+	for res := range results {
+		if res.error == nil {
+			return res.Conn, nil
+		}
 
-			if !res.ipv6 {
-				primary = res
+		if !res.ipv6 {
+			primary = res
+		} else {
+			fallback = res
+		}
+
+		if primary.done && fallback.done {
+			if primary.resolved {
+				return nil, primary.error
+			} else if fallback.resolved {
+				return nil, fallback.error
 			} else {
-				fallback = res
-			}
-
-			if primary.done && fallback.done {
-				if primary.resolved {
-					return nil, primary.error
-				} else if fallback.resolved {
-					return nil, fallback.error
-				} else {
-					return nil, primary.error
-				}
+				return nil, primary.error
 			}
 		}
 	}
+
+	return nil, errors.New("never touched")
 }

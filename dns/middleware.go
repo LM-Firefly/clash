@@ -1,20 +1,105 @@
 package dns
 
 import (
+	"net"
 	"strings"
+	"time"
 
+	"github.com/Dreamacro/clash/common/cache"
 	"github.com/Dreamacro/clash/component/fakeip"
+	"github.com/Dreamacro/clash/component/trie"
 	"github.com/Dreamacro/clash/log"
 
 	D "github.com/miekg/dns"
 )
 
-type handler func(w D.ResponseWriter, r *D.Msg)
+type handler func(r *D.Msg) (*D.Msg, error)
 type middleware func(next handler) handler
+
+func withHosts(hosts *trie.DomainTrie) middleware {
+	return func(next handler) handler {
+		return func(r *D.Msg) (*D.Msg, error) {
+			q := r.Question[0]
+
+			if !isIPRequest(q) {
+				return next(r)
+			}
+
+			record := hosts.Search(strings.TrimRight(q.Name, "."))
+			if record == nil {
+				return next(r)
+			}
+
+			ip := record.Data.(net.IP)
+			msg := r.Copy()
+
+			if v4 := ip.To4(); v4 != nil && q.Qtype == D.TypeA {
+				rr := &D.A{}
+				rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeA, Class: D.ClassINET, Ttl: dnsDefaultTTL}
+				rr.A = v4
+
+				msg.Answer = []D.RR{rr}
+			} else if v6 := ip.To16(); v6 != nil && q.Qtype == D.TypeAAAA {
+				rr := &D.AAAA{}
+				rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeAAAA, Class: D.ClassINET, Ttl: dnsDefaultTTL}
+				rr.AAAA = v6
+
+				msg.Answer = []D.RR{rr}
+			} else {
+				return next(r)
+			}
+
+			msg.SetRcode(r, D.RcodeSuccess)
+			msg.Authoritative = true
+			msg.RecursionAvailable = true
+
+			return msg, nil
+		}
+	}
+}
+
+func withMapping(mapping *cache.LruCache) middleware {
+	return func(next handler) handler {
+		return func(r *D.Msg) (*D.Msg, error) {
+			q := r.Question[0]
+
+			if !isIPRequest(q) {
+				return next(r)
+			}
+
+			msg, err := next(r)
+			if err != nil {
+				return nil, err
+			}
+
+			host := strings.TrimRight(q.Name, ".")
+
+			for _, ans := range msg.Answer {
+				var ip net.IP
+				var ttl uint32
+
+				switch a := ans.(type) {
+				case *D.A:
+					ip = a.A
+					ttl = a.Hdr.Ttl
+				case *D.AAAA:
+					ip = a.AAAA
+					ttl = a.Hdr.Ttl
+				default:
+					continue
+				}
+
+				mapping.SetWithExpire(ip.String(), host, time.Now().Add(time.Second*time.Duration(ttl)))
+			}
+
+			return msg, nil
+		}
+	}
+}
 
 func withFakeIP(fakePool *fakeip.Pool) middleware {
 	return func(next handler) handler {
-		return func(w D.ResponseWriter, r *D.Msg) {
+		return func(r *D.Msg) (*D.Msg, error) {
 			q := r.Question[0]
 
 			if q.Qtype == D.TypeAAAA {
@@ -25,17 +110,14 @@ func withFakeIP(fakePool *fakeip.Pool) middleware {
 				msg.Authoritative = true
 				msg.RecursionAvailable = true
 
-				w.WriteMsg(msg)
-				return
+				return msg, nil
 			} else if q.Qtype != D.TypeA {
-				next(w, r)
-				return
+				return next(r)
 			}
 
 			host := strings.TrimRight(q.Name, ".")
 			if fakePool.LookupHost(host) {
-				next(w, r)
-				return
+				return next(r)
 			}
 
 			rr := &D.A{}
@@ -50,25 +132,36 @@ func withFakeIP(fakePool *fakeip.Pool) middleware {
 			msg.Authoritative = true
 			msg.RecursionAvailable = true
 
-			w.WriteMsg(msg)
-			return
+			return msg, nil
 		}
 	}
 }
 
 func withResolver(resolver *Resolver) handler {
-	return func(w D.ResponseWriter, r *D.Msg) {
+	return func(r *D.Msg) (*D.Msg, error) {
+		q := r.Question[0]
+
+		// return a empty AAAA msg when ipv6 disabled
+		if !resolver.ipv6 && q.Qtype == D.TypeAAAA {
+			msg := &D.Msg{}
+			msg.Answer = []D.RR{}
+
+			msg.SetRcode(r, D.RcodeSuccess)
+			msg.Authoritative = true
+			msg.RecursionAvailable = true
+
+			return msg, nil
+		}
+
 		msg, err := resolver.Exchange(r)
 		if err != nil {
-			q := r.Question[0]
 			log.Debugln("[DNS Server] Exchange %s failed: %v", q.String(), err)
-			D.HandleFailed(w, r)
-			return
+			return msg, err
 		}
 		msg.SetRcode(r, msg.Rcode)
 		msg.Authoritative = true
-		w.WriteMsg(msg)
-		return
+
+		return msg, nil
 	}
 }
 
@@ -83,11 +176,19 @@ func compose(middlewares []middleware, endpoint handler) handler {
 	return h
 }
 
-func newHandler(resolver *Resolver) handler {
+func newHandler(resolver *Resolver, mapper *ResolverEnhancer) handler {
 	middlewares := []middleware{}
 
-	if resolver.FakeIPEnabled() {
-		middlewares = append(middlewares, withFakeIP(resolver.pool))
+	if resolver.hosts != nil {
+		middlewares = append(middlewares, withHosts(resolver.hosts))
+	}
+
+	if mapper.mode == FAKEIP {
+		middlewares = append(middlewares, withFakeIP(mapper.fakePool))
+	}
+
+	if mapper.mode != NORMAL {
+		middlewares = append(middlewares, withMapping(mapper.mapping))
 	}
 
 	return compose(middlewares, withResolver(resolver))

@@ -23,6 +23,7 @@ type fetcher struct {
 	vehicle   Vehicle
 	updatedAt *time.Time
 	ticker    *time.Ticker
+	done      chan struct{}
 	hash      [16]byte
 	parser    parser
 	onUpdate  func(interface{})
@@ -73,8 +74,10 @@ func (f *fetcher) Initial() (interface{}, error) {
 		}
 	}
 
-	if err := safeWrite(f.vehicle.Path(), buf); err != nil {
-		return nil, err
+	if f.vehicle.Type() != File {
+		if err := safeWrite(f.vehicle.Path(), buf); err != nil {
+			return nil, err
+		}
 	}
 
 	f.hash = md5.Sum(buf)
@@ -117,27 +120,33 @@ func (f *fetcher) Update() (interface{}, bool, error) {
 
 func (f *fetcher) Destroy() error {
 	if f.ticker != nil {
-		f.ticker.Stop()
+		f.done <- struct{}{}
 	}
 	return nil
 }
 
 func (f *fetcher) pullLoop() {
-	for range f.ticker.C {
-		elm, same, err := f.Update()
-		if err != nil {
-			log.Warnln("[Provider] %s pull error: %s", f.Name(), err.Error())
-			continue
-		}
+	for {
+		select {
+		case <-f.ticker.C:
+			elm, same, err := f.Update()
+			if err != nil {
+				log.Warnln("[Provider] %s pull error: %s", f.Name(), err.Error())
+				continue
+			}
 
-		if same {
-			log.Debugln("[Provider] %s's proxies doesn't change", f.Name())
-			continue
-		}
+			if same {
+				log.Debugln("[Provider] %s's proxies doesn't change", f.Name())
+				continue
+			}
 
-		log.Infoln("[Provider] %s's proxies update", f.Name())
-		if f.onUpdate != nil {
-			f.onUpdate(elm)
+			log.Infoln("[Provider] %s's proxies update", f.Name())
+			if f.onUpdate != nil {
+				f.onUpdate(elm)
+			}
+		case <-f.done:
+			f.ticker.Stop()
+			return
 		}
 	}
 }
@@ -165,6 +174,7 @@ func newFetcher(name string, interval time.Duration, vehicle Vehicle, parser par
 		ticker:   ticker,
 		vehicle:  vehicle,
 		parser:   parser,
+		done:     make(chan struct{}, 1),
 		onUpdate: onUpdate,
 	}
 }

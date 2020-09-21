@@ -28,6 +28,7 @@ func (ho *HTTPObfs) Read(b []byte) (int, error) {
 		n := copy(b, ho.buf[ho.offset:])
 		ho.offset += n
 		if ho.offset == len(ho.buf) {
+			pool.Put(ho.buf)
 			ho.buf = nil
 		}
 		return n, nil
@@ -67,7 +68,10 @@ func (ho *HTTPObfs) Write(b []byte) (int, error) {
 		req.Header.Set("User-Agent", fmt.Sprintf("curl/7.%d.%d", rand.Int()%54, rand.Int()%2))
 		req.Header.Set("Upgrade", "websocket")
 		req.Header.Set("Connection", "Upgrade")
-		req.Host = fmt.Sprintf("%s:%s", ho.host, ho.port)
+		req.Host = ho.host
+		if ho.port != "80" {
+			req.Host = fmt.Sprintf("%s:%s", ho.host, ho.port)
+		}
 		req.Header.Set("Sec-WebSocket-Key", base64.URLEncoding.EncodeToString(randBytes))
 		req.ContentLength = int64(len(b))
 		err := req.Write(ho.Conn)

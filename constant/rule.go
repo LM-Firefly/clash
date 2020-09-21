@@ -10,6 +10,7 @@ const (
 	SrcIPCIDR
 	SrcPort
 	DstPort
+	Process
 	MATCH
 )
 
@@ -33,6 +34,8 @@ func (rt RuleType) String() string {
 		return "SrcPort"
 	case DstPort:
 		return "DstPort"
+	case Process:
+		return "Process"
 	case MATCH:
 		return "Match"
 	default:
@@ -45,5 +48,5 @@ type Rule interface {
 	Match(metadata *Metadata) bool
 	Adapter() string
 	Payload() string
-	NoResolveIP() bool
+	ShouldResolveIP() bool
 }

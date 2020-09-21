@@ -27,6 +27,7 @@ func TestTrie_Basic(t *testing.T) {
 	assert.NotNil(t, tree.Insert("", localIP))
 	assert.Nil(t, tree.Search(""))
 	assert.NotNil(t, tree.Search("localhost"))
+	assert.Nil(t, tree.Search("www.google.com"))
 }
 
 func TestTrie_Wildcard(t *testing.T) {
@@ -39,6 +40,10 @@ func TestTrie_Wildcard(t *testing.T) {
 		".example.net",
 		".apple.*",
 		"+.foo.com",
+		"+.stun.*.*",
+		"+.stun.*.*.*",
+		"+.stun.*.*.*.*",
+		"stun.l.google.com",
 	}
 
 	for _, domain := range domains {
@@ -52,6 +57,7 @@ func TestTrie_Wildcard(t *testing.T) {
 	assert.NotNil(t, tree.Search("test.apple.com"))
 	assert.NotNil(t, tree.Search("test.foo.com"))
 	assert.NotNil(t, tree.Search("foo.com"))
+	assert.NotNil(t, tree.Search("global.stun.website.com"))
 	assert.Nil(t, tree.Search("foo.sub.example.com"))
 	assert.Nil(t, tree.Search("foo.example.dev"))
 	assert.Nil(t, tree.Search("example.com"))

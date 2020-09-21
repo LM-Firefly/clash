@@ -36,7 +36,7 @@ type Traffic struct {
 }
 
 func SetUIPath(path string) {
-	uiPath = path
+	uiPath = C.Path.Resolve(path)
 }
 
 func Start(addr string, secret string) {
@@ -142,6 +142,7 @@ func traffic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
 	t := T.DefaultManager
 	buf := &bytes.Buffer{}
 	var err error

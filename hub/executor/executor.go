@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path/filepath"
+	"sync"
 
 	"github.com/Dreamacro/clash/adapters/provider"
 	"github.com/Dreamacro/clash/component/auth"
@@ -20,36 +20,21 @@ import (
 	"github.com/Dreamacro/clash/tunnel"
 )
 
-// forward compatibility before 1.0
-func readRawConfig(path string) ([]byte, error) {
-	data, err := ioutil.ReadFile(path)
-	if err == nil && len(data) != 0 {
-		return data, nil
-	}
-
-	if filepath.Ext(path) != ".yaml" {
-		return nil, err
-	}
-
-	path = path[:len(path)-5] + ".yml"
-	if _, fallbackErr := os.Stat(path); fallbackErr == nil {
-		return ioutil.ReadFile(path)
-	}
-
-	return data, err
-}
+var (
+	mux sync.Mutex
+)
 
 func readConfig(path string) ([]byte, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, err
 	}
-	data, err := readRawConfig(path)
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(data) == 0 {
-		return nil, fmt.Errorf("Configuration file %s is empty", path)
+		return nil, fmt.Errorf("configuration file %s is empty", path)
 	}
 
 	return data, err
@@ -77,10 +62,11 @@ func ParseWithBytes(buf []byte) (*config.Config, error) {
 
 // ApplyConfig dispatch configure to all parts
 func ApplyConfig(cfg *config.Config, force bool) {
+	mux.Lock()
+	defer mux.Unlock()
+
 	updateUsers(cfg.Users)
-	if force {
-		updateGeneral(cfg.General)
-	}
+	updateGeneral(cfg.General, force)
 	updateProxies(cfg.Proxies, cfg.Providers)
 	updateRules(cfg.Rules)
 	updateDNS(cfg.DNS)
@@ -96,55 +82,58 @@ func GetGeneral() *config.General {
 	}
 
 	general := &config.General{
-		Port:           ports.Port,
-		SocksPort:      ports.SocksPort,
-		RedirPort:      ports.RedirPort,
-		MixedPort:      ports.MixedPort,
-		Authentication: authenticator,
-		AllowLan:       P.AllowLan(),
-		BindAddress:    P.BindAddress(),
-		Mode:           tunnel.Mode(),
-		LogLevel:       log.Level(),
+		Inbound: config.Inbound{
+			Port:           ports.Port,
+			SocksPort:      ports.SocksPort,
+			RedirPort:      ports.RedirPort,
+			MixedPort:      ports.MixedPort,
+			Authentication: authenticator,
+			AllowLan:       P.AllowLan(),
+			BindAddress:    P.BindAddress(),
+		},
+		Mode:     tunnel.Mode(),
+		LogLevel: log.Level(),
 	}
 
 	return general
 }
 
-func updateExperimental(c *config.Config) {
-	cfg := c.Experimental
-
-	tunnel.UpdateExperimental(cfg.IgnoreResolveFail)
-	if cfg.Interface != "" && c.DNS.Enable {
-		dialer.DialHook = dialer.DialerWithInterface(cfg.Interface)
-		dialer.ListenPacketHook = dialer.ListenPacketWithInterface(cfg.Interface)
-	} else {
-		dialer.DialHook = nil
-		dialer.ListenPacketHook = nil
-	}
-}
+func updateExperimental(c *config.Config) {}
 
 func updateDNS(c *config.DNS) {
-	if c.Enable == false {
+	if !c.Enable {
 		resolver.DefaultResolver = nil
-		tunnel.SetResolver(nil)
-		dns.ReCreateServer("", nil)
+		resolver.DefaultHostMapper = nil
+		dns.ReCreateServer("", nil, nil)
 		return
 	}
-	r := dns.New(dns.Config{
+
+	cfg := dns.Config{
 		Main:         c.NameServer,
 		Fallback:     c.Fallback,
 		IPv6:         c.IPv6,
 		EnhancedMode: c.EnhancedMode,
 		Pool:         c.FakeIPRange,
+		Hosts:        c.Hosts,
 		FallbackFilter: dns.FallbackFilter{
 			GeoIP:  c.FallbackFilter.GeoIP,
 			IPCIDR: c.FallbackFilter.IPCIDR,
 		},
 		Default: c.DefaultNameserver,
-	})
+	}
+
+	r := dns.NewResolver(cfg)
+	m := dns.NewEnhancer(cfg)
+
+	// reuse cache of old host mapper
+	if old := resolver.DefaultHostMapper; old != nil {
+		m.PatchFrom(old.(*dns.ResolverEnhancer))
+	}
+
 	resolver.DefaultResolver = r
-	tunnel.SetResolver(r)
-	if err := dns.ReCreateServer(c.Listen, r); err != nil {
+	resolver.DefaultHostMapper = m
+
+	if err := dns.ReCreateServer(c.Listen, r, m); err != nil {
 		log.Errorln("Start DNS server error: %s", err.Error())
 		return
 	}
@@ -166,9 +155,22 @@ func updateRules(rules []C.Rule) {
 	tunnel.UpdateRules(rules)
 }
 
-func updateGeneral(general *config.General) {
+func updateGeneral(general *config.General, force bool) {
 	log.SetLevel(general.LogLevel)
 	tunnel.SetMode(general.Mode)
+	resolver.DisableIPv6 = !general.IPv6
+
+	if general.Interface != "" {
+		dialer.DialHook = dialer.DialerWithInterface(general.Interface)
+		dialer.ListenPacketHook = dialer.ListenPacketWithInterface(general.Interface)
+	} else {
+		dialer.DialHook = nil
+		dialer.ListenPacketHook = nil
+	}
+
+	if !force {
+		return
+	}
 
 	allowLan := general.AllowLan
 	P.SetAllowLan(allowLan)

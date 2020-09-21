@@ -6,14 +6,11 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/Dreamacro/clash/common/queue"
 	C "github.com/Dreamacro/clash/constant"
-)
-
-var (
-	defaultURLTestTimeout = time.Second * 5
 )
 
 type Base struct {
@@ -78,13 +75,8 @@ func NewConn(c net.Conn, a C.ProxyAdapter) C.Conn {
 	return &conn{c, []string{a.Name()}}
 }
 
-type PacketConn interface {
-	net.PacketConn
-	WriteWithMetadata(p []byte, metadata *C.Metadata) (n int, err error)
-}
-
 type packetConn struct {
-	PacketConn
+	net.PacketConn
 	chain C.Chain
 }
 
@@ -96,18 +88,18 @@ func (c *packetConn) AppendToChains(a C.ProxyAdapter) {
 	c.chain = append(c.chain, a.Name())
 }
 
-func newPacketConn(pc PacketConn, a C.ProxyAdapter) C.PacketConn {
+func newPacketConn(pc net.PacketConn, a C.ProxyAdapter) C.PacketConn {
 	return &packetConn{pc, []string{a.Name()}}
 }
 
 type Proxy struct {
 	C.ProxyAdapter
 	history *queue.Queue
-	alive   bool
+	alive   uint32
 }
 
 func (p *Proxy) Alive() bool {
-	return p.alive
+	return atomic.LoadUint32(&p.alive) > 0
 }
 
 func (p *Proxy) Dial(metadata *C.Metadata) (C.Conn, error) {
@@ -119,7 +111,7 @@ func (p *Proxy) Dial(metadata *C.Metadata) (C.Conn, error) {
 func (p *Proxy) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
 	conn, err := p.ProxyAdapter.DialContext(ctx, metadata)
 	if err != nil {
-		p.alive = false
+		atomic.StoreUint32(&p.alive, 0)
 	}
 	return conn, err
 }
@@ -136,7 +128,7 @@ func (p *Proxy) DelayHistory() []C.DelayHistory {
 // LastDelay return last history record. if proxy is not alive, return the max value of uint16.
 func (p *Proxy) LastDelay() (delay uint16) {
 	var max uint16 = 0xffff
-	if !p.alive {
+	if atomic.LoadUint32(&p.alive) == 0 {
 		return max
 	}
 
@@ -167,7 +159,11 @@ func (p *Proxy) MarshalJSON() ([]byte, error) {
 // URLTest get the delay for the specified URL
 func (p *Proxy) URLTest(ctx context.Context, url string) (t uint16, err error) {
 	defer func() {
-		p.alive = err == nil
+		if err == nil {
+			atomic.StoreUint32(&p.alive, 1)
+		} else {
+			atomic.StoreUint32(&p.alive, 0)
+		}
 		record := C.DelayHistory{Time: time.Now()}
 		if err == nil {
 			record.Delay = t
@@ -223,5 +219,5 @@ func (p *Proxy) URLTest(ctx context.Context, url string) (t uint16, err error) {
 }
 
 func NewProxy(adapter C.ProxyAdapter) *Proxy {
-	return &Proxy{adapter, queue.New(10), true}
+	return &Proxy{adapter, queue.New(10), 1}
 }

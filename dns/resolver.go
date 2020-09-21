@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/Dreamacro/clash/common/cache"
 	"github.com/Dreamacro/clash/common/picker"
 	"github.com/Dreamacro/clash/component/fakeip"
 	"github.com/Dreamacro/clash/component/resolver"
+	"github.com/Dreamacro/clash/component/trie"
 
 	D "github.com/miekg/dns"
 	"golang.org/x/sync/singleflight"
@@ -35,9 +35,7 @@ type result struct {
 
 type Resolver struct {
 	ipv6            bool
-	mapping         bool
-	fakeip          bool
-	pool            *fakeip.Pool
+	hosts           *trie.DomainTrie
 	main            []dnsClient
 	fallback        []dnsClient
 	fallbackFilters []fallbackFilter
@@ -104,7 +102,7 @@ func (r *Resolver) Exchange(m *D.Msg) (msg *D.Msg, err error) {
 			setMsgTTL(msg, uint32(1)) // Continue fetch
 			go r.exchangeWithoutCache(m)
 		} else {
-			setMsgTTL(msg, uint32(expireTime.Sub(time.Now()).Seconds()))
+			setMsgTTL(msg, uint32(time.Until(expireTime).Seconds()))
 		}
 		return
 	}
@@ -115,21 +113,17 @@ func (r *Resolver) Exchange(m *D.Msg) (msg *D.Msg, err error) {
 func (r *Resolver) exchangeWithoutCache(m *D.Msg) (msg *D.Msg, err error) {
 	q := m.Question[0]
 
-	defer func() {
-		if msg == nil {
-			return
-		}
-
-		putMsgToCache(r.lruCache, q.String(), msg)
-		if r.mapping {
-			ips := r.msgToIP(msg)
-			for _, ip := range ips {
-				putMsgToCache(r.lruCache, ip.String(), msg)
+	ret, err, shared := r.group.Do(q.String(), func() (result interface{}, err error) {
+		defer func() {
+			if err != nil {
+				return
 			}
-		}
-	}()
 
-	ret, err, shared := r.group.Do(q.String(), func() (interface{}, error) {
+			msg := result.(*D.Msg)
+
+			putMsgToCache(r.lruCache, q.String(), msg)
+		}()
+
 		isIPReq := isIPRequest(q)
 		if isIPReq {
 			return r.fallbackExchange(m)
@@ -146,37 +140,6 @@ func (r *Resolver) exchangeWithoutCache(m *D.Msg) (msg *D.Msg, err error) {
 	}
 
 	return
-}
-
-// IPToHost return fake-ip or redir-host mapping host
-func (r *Resolver) IPToHost(ip net.IP) (string, bool) {
-	if r.fakeip {
-		return r.pool.LookBack(ip)
-	}
-
-	cache, _ := r.lruCache.Get(ip.String())
-	if cache == nil {
-		return "", false
-	}
-	fqdn := cache.(*D.Msg).Question[0].Name
-	return strings.TrimRight(fqdn, "."), true
-}
-
-func (r *Resolver) IsMapping() bool {
-	return r.mapping
-}
-
-// FakeIPEnabled returns if fake-ip is enabled
-func (r *Resolver) FakeIPEnabled() bool {
-	return r.fakeip
-}
-
-// IsFakeIP determine if given ip is a fake-ip
-func (r *Resolver) IsFakeIP(ip net.IP) bool {
-	if r.FakeIPEnabled() {
-		return r.pool.Exist(ip)
-	}
-	return false
 }
 
 func (r *Resolver) batchExchange(clients []dnsClient, m *D.Msg) (msg *D.Msg, err error) {
@@ -196,7 +159,7 @@ func (r *Resolver) batchExchange(clients []dnsClient, m *D.Msg) (msg *D.Msg, err
 
 	elm := fast.Wait()
 	if elm == nil {
-		err := errors.New("All DNS requests failed")
+		err := errors.New("all DNS requests failed")
 		if fErr := fast.Error(); fErr != nil {
 			err = fmt.Errorf("%w, first error: %s", err, fErr.Error())
 		}
@@ -303,9 +266,10 @@ type Config struct {
 	EnhancedMode   EnhancedMode
 	FallbackFilter FallbackFilter
 	Pool           *fakeip.Pool
+	Hosts          *trie.DomainTrie
 }
 
-func New(config Config) *Resolver {
+func NewResolver(config Config) *Resolver {
 	defaultResolver := &Resolver{
 		main:     transform(config.Default, nil),
 		lruCache: cache.NewLRUCache(cache.WithSize(4096), cache.WithStale(true)),
@@ -315,9 +279,7 @@ func New(config Config) *Resolver {
 		ipv6:     config.IPv6,
 		main:     transform(config.Main, defaultResolver),
 		lruCache: cache.NewLRUCache(cache.WithSize(4096), cache.WithStale(true)),
-		mapping:  config.EnhancedMode == MAPPING,
-		fakeip:   config.EnhancedMode == FAKEIP,
-		pool:     config.Pool,
+		hosts:    config.Hosts,
 	}
 
 	if len(config.Fallback) != 0 {
