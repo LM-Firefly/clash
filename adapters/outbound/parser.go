@@ -59,13 +59,6 @@ func ParseProxy(mapping map[string]interface{}) (C.Proxy, error) {
 			break
 		}
 		proxy, err = NewVmess(*vmessOption)
-	case "vless":
-		vlessOption := &VlessOption{}
-		err = decoder.Decode(mapping, vlessOption)
-		if err != nil {
-			break
-		}
-		proxy, err = NewVless(*vlessOption)
 	case "snell":
 		snellOption := &SnellOption{}
 		err = decoder.Decode(mapping, snellOption)
@@ -80,13 +73,6 @@ func ParseProxy(mapping map[string]interface{}) (C.Proxy, error) {
 			break
 		}
 		proxy, err = NewTrojan(*trojanOption)
-	case "direct":
-		directOption := &DirectOption{}
-		err = decoder.Decode(mapping, directOption)
-		if err != nil {
-			break
-		}
-		proxy = NewDirectWithOption(*directOption)
 	default:
 		return nil, fmt.Errorf("unsupport proxy type: %s", proxyType)
 	}

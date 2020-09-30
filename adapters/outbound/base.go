@@ -14,12 +14,10 @@ import (
 )
 
 type Base struct {
-	name       string
-	addr       string
-	tp         C.AdapterType
-	udp        bool
-	socketmark string
-	ifname     string
+	name string
+	addr string
+	tp   C.AdapterType
+	udp  bool
 }
 
 func (b *Base) Name() string {
@@ -42,14 +40,6 @@ func (b *Base) SupportUDP() bool {
 	return b.udp
 }
 
-func (b *Base) SocketMark() string {
-	return b.socketmark
-}
-
-func (b *Base) Interface() string {
-	return b.ifname
-}
-
 func (b *Base) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]string{
 		"type": b.Type().String(),
@@ -65,7 +55,7 @@ func (b *Base) Unwrap(metadata *C.Metadata) C.Proxy {
 }
 
 func NewBase(name string, addr string, tp C.AdapterType, udp bool) *Base {
-	return &Base{name, addr, tp, udp, "", ""}
+	return &Base{name, addr, tp, udp}
 }
 
 type conn struct {

@@ -26,8 +26,6 @@ type TrojanOption struct {
 	SNI            string   `proxy:"sni,omitempty"`
 	SkipCertVerify bool     `proxy:"skip-cert-verify,omitempty"`
 	UDP            bool     `proxy:"udp,omitempty"`
-	SocketMark     string   `proxy:"socket-mark,omitempty"`
-	Interface      string   `proxy:"interface-name,omitempty"`
 }
 
 func (t *Trojan) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
@@ -41,7 +39,7 @@ func (t *Trojan) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) 
 }
 
 func (t *Trojan) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
-	c, err := dialer.DialContext(ctx, "tcp", t.addr, dialer.DialOptions{SocketMark: t.SocketMark(), Interface: t.Interface()})
+	c, err := dialer.DialContext(ctx, "tcp", t.addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s connect error: %w", t.addr, err)
 	}
@@ -57,7 +55,7 @@ func (t *Trojan) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn,
 func (t *Trojan) DialUDP(metadata *C.Metadata) (C.PacketConn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tcpTimeout)
 	defer cancel()
-	c, err := dialer.DialContext(ctx, "tcp", t.addr, dialer.DialOptions{SocketMark: t.SocketMark(), Interface: t.Interface()})
+	c, err := dialer.DialContext(ctx, "tcp", t.addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s connect error: %w", t.addr, err)
 	}
@@ -99,12 +97,10 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 
 	return &Trojan{
 		Base: &Base{
-			name:       option.Name,
-			addr:       addr,
-			tp:         C.Trojan,
-			udp:        option.UDP,
-			socketmark: option.SocketMark,
-			ifname:     option.Interface,
+			name: option.Name,
+			addr: addr,
+			tp:   C.Trojan,
+			udp:  option.UDP,
 		},
 		instance: trojan.New(tOption),
 	}, nil

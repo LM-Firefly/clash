@@ -27,11 +27,10 @@ import (
 type General struct {
 	Inbound
 	Controller
-	Mode       T.TunnelMode `json:"mode"`
-	LogLevel   log.LogLevel `json:"log-level"`
-	IPv6       bool         `json:"ipv6"`
-	Interface  string       `json:"interface-name"`
-	SocketMark string       `json:"socket-mark"`
+	Mode      T.TunnelMode `json:"mode"`
+	LogLevel  log.LogLevel `json:"log-level"`
+	IPv6      bool         `json:"ipv6"`
+	Interface string       `json:"interface-name"`
 }
 
 // Inbound
@@ -123,7 +122,6 @@ type RawConfig struct {
 	ExternalUI         string       `yaml:"external-ui"`
 	Secret             string       `yaml:"secret"`
 	Interface          string       `yaml:"interface-name"`
-	SocketMark         string       `yaml:"socket-mark"`
 
 	ProxyProvider map[string]map[string]interface{} `yaml:"proxy-providers"`
 	Hosts         map[string]string                 `yaml:"hosts"`
@@ -245,11 +243,10 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 			ExternalUI:         cfg.ExternalUI,
 			Secret:             cfg.Secret,
 		},
-		Mode:       cfg.Mode,
-		LogLevel:   cfg.LogLevel,
-		IPv6:       cfg.IPv6,
-		Interface:  cfg.Interface,
-		SocketMark: cfg.SocketMark,
+		Mode:      cfg.Mode,
+		LogLevel:  cfg.LogLevel,
+		IPv6:      cfg.IPv6,
+		Interface: cfg.Interface,
 	}, nil
 }
 
@@ -261,7 +258,7 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 	groupsConfig := cfg.ProxyGroup
 	providersConfig := cfg.ProxyProvider
 
-	proxies["DIRECT"] = outbound.NewProxy(outbound.NewDirectWithOption(outbound.DirectOption{SocketMark: cfg.SocketMark, Interface: cfg.Interface}))
+	proxies["DIRECT"] = outbound.NewProxy(outbound.NewDirect())
 	proxies["REJECT"] = outbound.NewProxy(outbound.NewReject())
 	proxyList = append(proxyList, "DIRECT", "REJECT")
 

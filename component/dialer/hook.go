@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/Dreamacro/clash/common/singledo"
-	"github.com/Dreamacro/clash/common/sockopt"
 )
 
 type DialerHookFunc = func(dialer *net.Dialer) error
@@ -106,8 +105,44 @@ func ListenPacketWithInterface(name string) ListenPacketHookFunc {
 }
 
 func DialerWithInterface(name string) DialHookFunc {
+	single := singledo.NewSingle(5 * time.Second)
+
 	return func(dialer *net.Dialer, network string, ip net.IP) error {
-		sockopt.BindToDevice(dialer, name)
+		elm, err, _ := single.Do(func() (interface{}, error) {
+			iface, err := net.InterfaceByName(name)
+			if err != nil {
+				return nil, err
+			}
+
+			addrs, err := iface.Addrs()
+			if err != nil {
+				return nil, err
+			}
+
+			return addrs, nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		addrs := elm.([]net.Addr)
+
+		switch network {
+		case "tcp", "tcp4", "tcp6":
+			if addr, err := lookupTCPAddr(ip, addrs); err == nil {
+				dialer.LocalAddr = addr
+			} else {
+				return err
+			}
+		case "udp", "udp4", "udp6":
+			if addr, err := lookupUDPAddr(ip, addrs); err == nil {
+				dialer.LocalAddr = addr
+			} else {
+				return err
+			}
+		}
+
 		return nil
 	}
 }
