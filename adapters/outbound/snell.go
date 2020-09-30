@@ -101,9 +101,11 @@ func NewSnell(option SnellOption) (*Snell, error) {
 
 	s := &Snell{
 		Base: &Base{
-			name: option.Name,
-			addr: addr,
-			tp:   C.Snell,
+			name:       option.Name,
+			addr:       addr,
+			tp:         C.Snell,
+			socketmark: option.SocketMark,
+			ifname:     option.Interface,
 		},
 		psk:        psk,
 		obfsOption: obfsOption,
