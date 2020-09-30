@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/Dreamacro/clash/log"
@@ -19,14 +20,16 @@ var (
 type parser = func([]byte) (interface{}, error)
 
 type fetcher struct {
-	name      string
-	vehicle   Vehicle
-	updatedAt *time.Time
-	ticker    *time.Ticker
-	done      chan struct{}
-	hash      [16]byte
-	parser    parser
-	onUpdate  func(interface{})
+	name        string
+	vehicle     Vehicle
+	tryUpdateAt *time.Time
+	updatedAt   *time.Time
+	interval    time.Duration
+	signal      chan struct{}
+	hash        [16]byte
+	parser      parser
+	closed      uint32
+	onUpdate    func(interface{})
 }
 
 func (f *fetcher) Name() string {
@@ -47,6 +50,7 @@ func (f *fetcher) Initial() (interface{}, error) {
 		buf, err = ioutil.ReadFile(f.vehicle.Path())
 		modTime := stat.ModTime()
 		f.updatedAt = &modTime
+		f.tryUpdateAt = f.updatedAt
 		isLocal = true
 	} else {
 		buf, err = f.vehicle.Read()
@@ -83,7 +87,7 @@ func (f *fetcher) Initial() (interface{}, error) {
 	f.hash = md5.Sum(buf)
 
 	// pull proxies automatically
-	if f.ticker != nil {
+	if f.interval > 0 {
 		go f.pullLoop()
 	}
 
@@ -91,12 +95,15 @@ func (f *fetcher) Initial() (interface{}, error) {
 }
 
 func (f *fetcher) Update() (interface{}, bool, error) {
+	now := time.Now()
+	f.tryUpdateAt = &now
+
 	buf, err := f.vehicle.Read()
 	if err != nil {
 		return nil, false, err
 	}
 
-	now := time.Now()
+	now = time.Now()
 	hash := md5.Sum(buf)
 	if bytes.Equal(f.hash[:], hash[:]) {
 		f.updatedAt = &now
@@ -115,20 +122,43 @@ func (f *fetcher) Update() (interface{}, bool, error) {
 	f.updatedAt = &now
 	f.hash = hash
 
+	f.notify()
+
 	return proxies, false, nil
 }
 
 func (f *fetcher) Destroy() error {
-	if f.ticker != nil {
-		f.done <- struct{}{}
-	}
+	atomic.StoreUint32(&f.closed, 1)
+
+	f.notify()
+
 	return nil
 }
 
+func (f *fetcher) notify() {
+	select {
+	case f.signal <- struct{}{}:
+		break
+	default:
+		break
+	}
+}
+
 func (f *fetcher) pullLoop() {
-	for {
+	timer := time.NewTimer(f.interval)
+	defer timer.Stop()
+
+	for atomic.LoadUint32(&f.closed) == 0 {
+		offset := f.interval - time.Since(*f.tryUpdateAt)
+
+		if offset < 0 {
+			offset = time.Second * 1
+		}
+
+		timer.Reset(offset)
+
 		select {
-		case <-f.ticker.C:
+		case <-timer.C:
 			elm, same, err := f.Update()
 			if err != nil {
 				log.Warnln("[Provider] %s pull error: %s", f.Name(), err.Error())
@@ -144,9 +174,8 @@ func (f *fetcher) pullLoop() {
 			if f.onUpdate != nil {
 				f.onUpdate(elm)
 			}
-		case <-f.done:
-			f.ticker.Stop()
-			return
+		case <-f.signal:
+			continue
 		}
 	}
 }
@@ -164,17 +193,12 @@ func safeWrite(path string, buf []byte) error {
 }
 
 func newFetcher(name string, interval time.Duration, vehicle Vehicle, parser parser, onUpdate func(interface{})) *fetcher {
-	var ticker *time.Ticker
-	if interval != 0 {
-		ticker = time.NewTicker(interval)
-	}
-
 	return &fetcher{
 		name:     name,
-		ticker:   ticker,
+		interval: interval,
 		vehicle:  vehicle,
 		parser:   parser,
-		done:     make(chan struct{}, 1),
+		signal:   make(chan struct{}, 1),
 		onUpdate: onUpdate,
 	}
 }
