@@ -39,7 +39,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm/v7,linux/arm64
           push: true
-          tags: "dreamacro/clash:dev"
+          tags: "lm-firefly/clash:dev"
 
       - name: Get all docker tags
         if: startsWith(github.ref, 'refs/tags/')
@@ -48,8 +48,8 @@ jobs:
         with:
           script: |
             const tags = [
-              'dreamacro/clash:latest',
-              `dreamacro/clash:${context.payload.ref.replace(/\/?refs\/tags\//, '')}`
+              'lm-firefly/clash:latest',
+              `lm-firefly/clash:${context.payload.ref.replace(/\/?refs\/tags\//, '')}`
             ]
             return tags.join(',')
           result-encoding: string
