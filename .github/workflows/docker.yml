@@ -4,7 +4,7 @@ on:
     branches:
       - dev
     tags:
-      - '*'
+      - "*"
 jobs:
   build:
     name: Build
@@ -32,6 +32,13 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      - name: Login to Github Package
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: LM-Firefly
+          password: ${{ secrets.PACKAGE_TOKEN }}
+
       - name: Build dev branch and push
         if: github.ref == 'refs/heads/dev'
         uses: docker/build-push-action@v2
@@ -39,7 +46,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm/v7,linux/arm64
           push: true
-          tags: 'LM-Firefly/clash:dev'
+          tags: "LM-Firefly/clash:dev,ghcr.io/LM-Firefly/clash:dev"
 
       - name: Get all docker tags
         if: startsWith(github.ref, 'refs/tags/')
@@ -47,9 +54,12 @@ jobs:
         id: tags
         with:
           script: |
+            const ref = `${context.payload.ref.replace(/\/?refs\/tags\//, '')}`
             const tags = [
               'LM-Firefly/clash:latest',
-              `LM-Firefly/clash:${context.payload.ref.replace(/\/?refs\/tags\//, '')}`
+              `LM-Firefly/clash:${ref}`,
+              'ghcr.io/LM-Firefly/clash:latest',
+              `ghcr.io/LM-Firefly/clash:${ref}`
             ]
             return tags.join(',')
           result-encoding: string
