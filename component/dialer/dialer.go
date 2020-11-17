@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 
+	"github.com/Dreamacro/clash/common/picker"
 	"github.com/Dreamacro/clash/component/resolver"
 )
 
@@ -24,41 +25,28 @@ func Dial(network, address string) (net.Conn, error) {
 }
 
 func DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+
+	var ips []net.IP
+
 	switch network {
-	case "tcp4", "tcp6", "udp4", "udp6":
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-
-		dialer, err := Dialer()
-		if err != nil {
-			return nil, err
-		}
-
-		var ip net.IP
-		switch network {
-		case "tcp4", "udp4":
-			ip, err = resolver.ResolveIPv4(host)
-		default:
-			ip, err = resolver.ResolveIPv6(host)
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		if DialHook != nil {
-			if err := DialHook(dialer, network, ip); err != nil {
-				return nil, err
-			}
-		}
-		return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+	case "tcp4", "udp4":
+		ips, err = resolver.ResolveIPs(host, resolver.FlagResolveIPv4)
+	case "tcp6", "udp6":
+		ips, err = resolver.ResolveIPs(host, resolver.FlagResolveIPv6)
 	case "tcp", "udp":
-		return dualStackDialContext(ctx, network, address)
+		ips, err = resolver.ResolveIPs(host, resolver.FlagResolveIPv4|resolver.FlagResolveIPv6)
 	default:
 		return nil, errors.New("network invalid")
 	}
+	if err != nil {
+		return nil, err
+	}
+
+	return parallelDialContext(ctx, network, ips, port)
 }
 
 func ListenPacket(network, address string) (net.PacketConn, error) {
@@ -74,86 +62,41 @@ func ListenPacket(network, address string) (net.PacketConn, error) {
 	return cfg.ListenPacket(context.Background(), network, address)
 }
 
-func dualStackDialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
+func parallelDialContext(ctx context.Context, network string, ips []net.IP, port string) (net.Conn, error) {
+	dialer, err := Dialer()
 	if err != nil {
 		return nil, err
 	}
 
-	returned := make(chan struct{})
-	defer close(returned)
+	fast, ctx := picker.WithContext(ctx)
 
-	type dialResult struct {
-		net.Conn
-		error
-		resolved bool
-		ipv6     bool
-		done     bool
-	}
-	results := make(chan dialResult)
-	var primary, fallback dialResult
+	fast.Closer(func(conn interface{}) {
+		conn.(net.Conn).Close()
+	})
 
-	startRacer := func(ctx context.Context, network, host string, ipv6 bool) {
-		result := dialResult{ipv6: ipv6, done: true}
-		defer func() {
-			select {
-			case results <- result:
-			case <-returned:
-				if result.Conn != nil {
-					result.Conn.Close()
+	for _, i := range ips {
+		ip := i
+
+		fast.Go(func() (interface{}, error) {
+			if hook := DialHook; hook != nil {
+				if err := hook(dialer, network, ip); err != nil {
+					return nil, err
 				}
 			}
-		}()
 
-		dialer, err := Dialer()
-		if err != nil {
-			result.error = err
-			return
-		}
-
-		var ip net.IP
-		if ipv6 {
-			ip, result.error = resolver.ResolveIPv6(host)
-		} else {
-			ip, result.error = resolver.ResolveIPv4(host)
-		}
-		if result.error != nil {
-			return
-		}
-		result.resolved = true
-
-		if DialHook != nil {
-			if result.error = DialHook(dialer, network, ip); result.error != nil {
-				return
-			}
-		}
-		result.Conn, result.error = dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		})
 	}
 
-	go startRacer(ctx, network+"4", host, false)
-	go startRacer(ctx, network+"6", host, true)
+	conn := fast.Wait()
 
-	for res := range results {
-		if res.error == nil {
-			return res.Conn, nil
-		}
-
-		if !res.ipv6 {
-			primary = res
-		} else {
-			fallback = res
-		}
-
-		if primary.done && fallback.done {
-			if primary.resolved {
-				return nil, primary.error
-			} else if fallback.resolved {
-				return nil, fallback.error
-			} else {
-				return nil, primary.error
-			}
-		}
+	if conn != nil {
+		return conn.(net.Conn), nil
 	}
 
-	return nil, errors.New("never touched")
+	if fast.Error() != nil {
+		return nil, fast.Error()
+	}
+
+	return nil, ErrAddrNotFound
 }

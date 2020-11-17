@@ -18,6 +18,7 @@ type Picker struct {
 	once    sync.Once
 	errOnce sync.Once
 	result  interface{}
+	closer  func(interface{})
 	err     error
 }
 
@@ -39,6 +40,10 @@ func WithContext(ctx context.Context) (*Picker, context.Context) {
 func WithTimeout(ctx context.Context, timeout time.Duration) (*Picker, context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	return newPicker(ctx, cancel), ctx
+}
+
+func (p *Picker) Closer(c func(interface{})) {
+	p.closer = c
 }
 
 // Wait blocks until all function calls from the Go method have returned,
@@ -65,12 +70,20 @@ func (p *Picker) Go(f func() (interface{}, error)) {
 		defer p.wg.Done()
 
 		if ret, err := f(); err == nil {
+			done := false
+
 			p.once.Do(func() {
 				p.result = ret
+				done = true
+
 				if p.cancel != nil {
 					p.cancel()
 				}
 			})
+
+			if !done && p.closer != nil {
+				p.closer(ret)
+			}
 		} else {
 			p.errOnce.Do(func() {
 				p.err = err
