@@ -78,7 +78,7 @@ func (f *fetcher) Initial() (interface{}, error) {
 		}
 	}
 
-	if f.vehicle.Type() != File {
+	if f.vehicle.Type() != File && !isLocal {
 		if err := safeWrite(f.vehicle.Path(), buf); err != nil {
 			return nil, err
 		}
@@ -115,8 +115,10 @@ func (f *fetcher) Update() (interface{}, bool, error) {
 		return nil, false, err
 	}
 
-	if err := safeWrite(f.vehicle.Path(), buf); err != nil {
-		return nil, false, err
+	if f.vehicle.Type() != File {
+		if err := safeWrite(f.vehicle.Path(), buf); err != nil {
+			return nil, false, err
+		}
 	}
 
 	f.updatedAt = &now
