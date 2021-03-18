@@ -28,11 +28,6 @@ const (
 	LoadBalance
 )
 
-type ServerAdapter interface {
-	net.Conn
-	Metadata() *Metadata
-}
-
 type Connection interface {
 	Chains() Chain
 	AppendToChains(adapter ProxyAdapter)
@@ -48,6 +43,15 @@ func (c Chain) String() string {
 		return c[0]
 	default:
 		return fmt.Sprintf("%s[%s]", c[len(c)-1], c[0])
+	}
+}
+
+func (c Chain) Last() string {
+	switch len(c) {
+	case 0:
+		return ""
+	default:
+		return c[0]
 	}
 }
 
