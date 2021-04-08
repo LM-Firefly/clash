@@ -84,12 +84,12 @@ func newDoHClient(url string, r *Resolver) *dohClient {
 					return nil, err
 				}
 
-				ips, err := r.ResolveIPs(host, resolver.FlagResolveIPv4|resolver.FlagResolveIPv6|resolver.FlagPreferIPv4)
+				ip, err := resolver.ResolveIPWithResolver(host, r)
 				if err != nil {
 					return nil, err
 				}
 
-				return dialer.DialContext(ctx, "tcp", net.JoinHostPort(ips[0].String(), port))
+				return dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
 			},
 		},
 	}

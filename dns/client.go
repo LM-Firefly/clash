@@ -29,7 +29,7 @@ func (c *client) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err
 		// a default ip dns
 		ip = net.ParseIP(c.host)
 	} else {
-		if ips, err := c.r.ResolveIPs(c.host, resolver.FlagResolveIPv4|resolver.FlagResolveIPv6|resolver.FlagPreferIPv4); err != nil {
+		if ip, err = resolver.ResolveIPWithResolver(c.host, c.r); err != nil {
 			return nil, fmt.Errorf("use default dns resolve failed: %w", err)
 		} else {
 			ip = ips[0]
