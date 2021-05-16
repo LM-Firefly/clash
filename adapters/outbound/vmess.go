@@ -64,6 +64,7 @@ type GrpcOptions struct {
 	GrpcServiceName string `proxy:"grpc-service-name,omitempty"`
 }
 
+// StreamConn implements C.ProxyAdapter
 func (v *Vmess) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
 	var err error
 	switch v.option.Network {
@@ -170,6 +171,7 @@ func (v *Vmess) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
 	return v.client.StreamConn(c, parseVmessAddr(metadata))
 }
 
+// DialContext implements C.ProxyAdapter
 func (v *Vmess) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
 	// gun transport
 	if v.transport != nil {
@@ -198,6 +200,7 @@ func (v *Vmess) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn
 	return NewConn(c, v), err
 }
 
+// DialUDP implements C.ProxyAdapter
 func (v *Vmess) DialUDP(metadata *C.Metadata) (_ C.PacketConn, err error) {
 	// vmess use stream-oriented udp with a special address, so we needs a net.UDPAddr
 	if !metadata.Resolved() {
@@ -270,7 +273,12 @@ func NewVmess(option VmessOption) (*Vmess, error) {
 		option: &option,
 	}
 
-	if option.Network == "grpc" {
+	switch option.Network {
+	case "h2":
+		if len(option.HTTP2Opts.Host) == 0 {
+			option.HTTP2Opts.Host = append(option.HTTP2Opts.Host, "www.example.com")
+		}
+	case "grpc":
 		dialFn := func(network, addr string) (net.Conn, error) {
 			c, err := dialer.DialContext(context.Background(), "tcp", v.addr)
 			if err != nil {
