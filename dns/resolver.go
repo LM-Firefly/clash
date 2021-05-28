@@ -42,6 +42,7 @@ type Resolver struct {
 	fallbackIPFilters     []fallbackIPFilter
 	group                 singleflight.Group
 	lruCache              *cache.LruCache
+	policy                *trie.DomainTrie
 }
 
 // ResolveIP request with TypeA and TypeAAAA, priority return TypeA
@@ -149,6 +150,9 @@ func (r *Resolver) exchangeWithoutCache(m *D.Msg) (msg *D.Msg, err error) {
 			return r.ipExchange(m)
 		}
 
+		if matched := r.matchPolicy(m); len(matched) != 0 {
+			return r.batchExchange(matched, m)
+		}
 		return r.batchExchange(r.main, m)
 	})
 
@@ -190,6 +194,24 @@ func (r *Resolver) batchExchange(clients []dnsClient, m *D.Msg) (msg *D.Msg, err
 	return
 }
 
+func (r *Resolver) matchPolicy(m *D.Msg) []dnsClient {
+	if r.policy == nil {
+		return nil
+	}
+
+	domain := r.msgToDomain(m)
+	if domain == "" {
+		return nil
+	}
+
+	record := r.policy.Search(domain)
+	if record == nil {
+		return nil
+	}
+
+	return record.Data.([]dnsClient)
+}
+
 func (r *Resolver) shouldOnlyQueryFallback(m *D.Msg) bool {
 	if r.fallback == nil || len(r.fallbackDomainFilters) == 0 {
 		return false
@@ -211,6 +233,12 @@ func (r *Resolver) shouldOnlyQueryFallback(m *D.Msg) bool {
 }
 
 func (r *Resolver) ipExchange(m *D.Msg) (msg *D.Msg, err error) {
+
+	if matched := r.matchPolicy(m); len(matched) != 0 {
+		res := <-r.asyncExchange(matched, m)
+		return res.Msg, res.Error
+	}
+
 	onlyFallback := r.shouldOnlyQueryFallback(m)
 
 	if onlyFallback {
@@ -298,6 +326,7 @@ type Config struct {
 	FallbackFilter FallbackFilter
 	Pool           *fakeip.Pool
 	Hosts          *trie.DomainTrie
+	Policy         map[string]NameServer
 }
 
 func NewResolver(config Config) *Resolver {
@@ -315,6 +344,13 @@ func NewResolver(config Config) *Resolver {
 
 	if len(config.Fallback) != 0 {
 		r.fallback = transform(config.Fallback, defaultResolver)
+	}
+
+	if len(config.Policy) != 0 {
+		r.policy = trie.New()
+		for domain, nameserver := range config.Policy {
+			r.policy.Insert(domain, transform([]NameServer{nameserver}, defaultResolver))
+		}
 	}
 
 	fallbackIPFilters := []fallbackIPFilter{}
