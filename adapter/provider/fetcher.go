@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	types "github.com/Dreamacro/clash/constant/provider"
 	"github.com/Dreamacro/clash/log"
 )
 
@@ -20,23 +21,21 @@ var (
 type parser = func([]byte) (interface{}, error)
 
 type fetcher struct {
-	name        string
-	vehicle     Vehicle
-	tryUpdateAt *time.Time
-	updatedAt   *time.Time
-	interval    time.Duration
-	signal      chan struct{}
-	hash        [16]byte
-	parser      parser
-	closed      uint32
-	onUpdate    func(interface{})
+	name      string
+	vehicle   types.Vehicle
+	updatedAt *time.Time
+	ticker    *time.Ticker
+	done      chan struct{}
+	hash      [16]byte
+	parser    parser
+	onUpdate  func(interface{})
 }
 
 func (f *fetcher) Name() string {
 	return f.name
 }
 
-func (f *fetcher) VehicleType() VehicleType {
+func (f *fetcher) VehicleType() types.VehicleType {
 	return f.vehicle.Type()
 }
 
@@ -80,7 +79,7 @@ func (f *fetcher) Initial() (interface{}, error) {
 		isLocal = false
 	}
 
-	if f.vehicle.Type() != File && !isLocal {
+	if f.vehicle.Type() != types.File && !isLocal {
 		if err := safeWrite(f.vehicle.Path(), buf); err != nil {
 			return nil, err
 		}
@@ -117,7 +116,7 @@ func (f *fetcher) Update() (interface{}, bool, error) {
 		return nil, false, err
 	}
 
-	if f.vehicle.Type() != File {
+	if f.vehicle.Type() != types.File {
 		if err := safeWrite(f.vehicle.Path(), buf); err != nil {
 			return nil, false, err
 		}
@@ -196,7 +195,12 @@ func safeWrite(path string, buf []byte) error {
 	return ioutil.WriteFile(path, buf, fileMode)
 }
 
-func newFetcher(name string, interval time.Duration, vehicle Vehicle, parser parser, onUpdate func(interface{})) *fetcher {
+func newFetcher(name string, interval time.Duration, vehicle types.Vehicle, parser parser, onUpdate func(interface{})) *fetcher {
+	var ticker *time.Ticker
+	if interval != 0 {
+		ticker = time.NewTicker(interval)
+	}
+
 	return &fetcher{
 		name:     name,
 		interval: interval,
